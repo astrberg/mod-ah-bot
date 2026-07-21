@@ -29,8 +29,42 @@
 #include "AuctionHouseBot.h"
 #include "AuctionHouseBotCommon.h"
 #include "AuctionHouseSearcher.h"
+#include "ObjectAccessor.h"
+#include "CellImpl.h"
+#include "GridNotifiers.h"
+#include "GridNotifiersImpl.h"
 
 using namespace std;
+
+bool IsNearAuctioneer(uint32 botLowGuid)
+{
+    Player* realPlayer = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(botLowGuid));
+    if (!realPlayer || !realPlayer->IsInWorld() || !realPlayer->GetMap())
+        return false;
+
+    if (realPlayer->IsBeingTeleported())
+        return false;
+
+    if (realPlayer->GetSession() && (realPlayer->GetSession()->PlayerLogout() || realPlayer->GetSession()->PlayerLoading()))
+        return false;
+
+    std::list<Unit*> targets;
+    Acore::AnyUnitInObjectRangeCheck u_check(realPlayer, 15.0f);
+    Acore::UnitListSearcher<Acore::AnyUnitInObjectRangeCheck> searcher(realPlayer, targets, u_check);
+    Cell::VisitObjects(realPlayer, searcher, 15.0f);
+
+    for (Unit* unit : targets)
+    {
+        if (Creature* creature = unit->ToCreature())
+        {
+            if (creature->IsAlive() && creature->HasNpcFlag(UNIT_NPC_FLAG_AUCTIONEER))
+            {
+                return true;
+            }
+        }
+    }
+    return false;
+}
 
 AuctionHouseBot::AuctionHouseBot(uint32 account, uint32 id)
 {
@@ -183,6 +217,11 @@ void AuctionHouseBot::Buy(Player* AHBplayer, AHBConfig* config, WorldSession* se
     //
 
     if (!config->AHBBuyer)
+    {
+        return;
+    }
+
+    if (!IsNearAuctioneer(_id))
     {
         return;
     }
@@ -519,6 +558,11 @@ void AuctionHouseBot::Sell(Player* AHBplayer, AHBConfig* config)
     // 
 
     if (!config->AHBSeller)
+    {
+        return;
+    }
+
+    if (!IsNearAuctioneer(_id))
     {
         return;
     }
@@ -1022,18 +1066,28 @@ void AuctionHouseBot::Update()
         return;
     }
 
-    //
-    // Preprare for operation
-    //
+    Player* realPlayer = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(_id));
+    if (!realPlayer || !realPlayer->IsInWorld() || !realPlayer->GetMap())
+    {
+        return;
+    }
 
-    std::string accountName = "AuctionHouseBot" + std::to_string(_account);
+    if (realPlayer->IsBeingTeleported())
+        return;
 
-    WorldSession _session(_account, std::move(accountName), 0, nullptr, SEC_PLAYER, sWorld->getIntConfig(CONFIG_EXPANSION), 0, LOCALE_enUS, 0, false, false, 0);
+    if (realPlayer->GetSession() && (realPlayer->GetSession()->PlayerLogout() || realPlayer->GetSession()->PlayerLoading()))
+        return;
 
-    Player _AHBplayer(&_session);
-    _AHBplayer.Initialize(_id);
+    if (!IsNearAuctioneer(_id))
+    {
+        return;
+    }
 
-    ObjectAccessor::AddObject(&_AHBplayer);
+    WorldSession* session = realPlayer->GetSession();
+    if (!session)
+    {
+        return;
+    }
 
     LOG_INFO("module", "AHBot [{}]: Begin Performing Update Cycle", _id);
 
@@ -1054,7 +1108,7 @@ void AuctionHouseBot::Update()
                 LOG_INFO("module", "AHBot [{}]: Begin Sell for Alliance...", _id);
             }
 
-            Sell(&_AHBplayer, _allianceConfig);
+            Sell(realPlayer, _allianceConfig);
 
             if (((_newrun - _lastrun_a_sec) >= (_allianceConfig->GetBiddingInterval() * MINUTE)) && (_allianceConfig->GetBidsPerInterval() > 0))
             {
@@ -1063,7 +1117,7 @@ void AuctionHouseBot::Update()
                     LOG_INFO("module", "AHBot [{}]: Begin Buy for Alliance...", _id);
                 }
 
-                Buy(&_AHBplayer, _allianceConfig, &_session);
+                Buy(realPlayer, _allianceConfig, session);
                 _lastrun_a_sec = _newrun;
             }
         }
@@ -1078,7 +1132,7 @@ void AuctionHouseBot::Update()
             {
                 LOG_INFO("module", "AHBot [{}]: Begin Sell for Horde...", _id);
             }
-            Sell(&_AHBplayer, _hordeConfig);
+            Sell(realPlayer, _hordeConfig);
 
             if (((_newrun - _lastrun_h_sec) >= (_hordeConfig->GetBiddingInterval() * MINUTE)) && (_hordeConfig->GetBidsPerInterval() > 0))
             {
@@ -1086,7 +1140,7 @@ void AuctionHouseBot::Update()
                 {
                     LOG_INFO("module", "AHBot [{}]: Begin Buy for Horde...", _id);
                 }
-                Buy(&_AHBplayer, _hordeConfig, &_session);
+                Buy(realPlayer, _hordeConfig, session);
                 _lastrun_h_sec = _newrun;
             }
         }
@@ -1103,7 +1157,7 @@ void AuctionHouseBot::Update()
         {
             LOG_INFO("module", "AHBot [{}]: Begin Sell for Neutral...", _id);
         }
-        Sell(&_AHBplayer, _neutralConfig);
+        Sell(realPlayer, _neutralConfig);
 
         if (((_newrun - _lastrun_n_sec) >= (_neutralConfig->GetBiddingInterval() * MINUTE)) && (_neutralConfig->GetBidsPerInterval() > 0))
         {
@@ -1111,12 +1165,10 @@ void AuctionHouseBot::Update()
             {
                 LOG_INFO("module", "AHBot [{}]: Begin Buy for Neutral...", _id);
             }
-            Buy(&_AHBplayer, _neutralConfig, &_session);
+            Buy(realPlayer, _neutralConfig, session);
             _lastrun_n_sec = _newrun;
         }
     }
-
-    ObjectAccessor::RemoveObject(&_AHBplayer);
 }
 
 // =============================================================================

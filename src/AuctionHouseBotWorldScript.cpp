@@ -38,8 +38,18 @@ void AHBot_WorldScript::OnBeforeConfigLoad(bool reload)
 
     if (account == 0 && player == 0)
     {
-        LOG_ERROR("server.loading", "AHBot: Account id and player id missing from configuration; is that the right file?");
-        return;
+        LOG_INFO("server.loading", "AHBot: Account/Player ID not set. Automatically loading all playerbots as auctioneers...");
+        QueryResult result = CharacterDatabase.Query("SELECT c.guid FROM characters c JOIN acore_auth.account a ON c.account = a.id WHERE a.username LIKE 'RNDBOT%'");
+        if (result)
+        {
+            gBotsId.clear();
+            do
+            {
+                Field* fields = result->Fetch();
+                uint32 botId  = fields[0].Get<uint32>();
+                gBotsId.insert(botId);
+            } while (result->NextRow());
+        }
     }
     else
     {
